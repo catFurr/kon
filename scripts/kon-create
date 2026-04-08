@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+set -e
+
+SESSION=${1:?Usage: kon-create <session-name>}
+DOMAIN="gaza.sonacove.com"
+KON_DIR="/var/kon"
+SESSIONS_DIR="$KON_DIR/sessions"
+SLOTS_DIR="$KON_DIR/slots"
+GIT_CACHE="/var/git-cache"
+MAX_SLOTS=7
+SYS_PATH="/usr/local/bin:/usr/bin:/bin"
+
+[[ "$SESSION" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "Error: invalid name" >&2; exit 1; }
+[ -d "$SESSIONS_DIR/$SESSION" ] && { echo "Error: session '$SESSION' exists" >&2; exit 1; }
+
+mkdir -p "$SLOTS_DIR"
+SLOT=""
+for i in $(seq 1 $MAX_SLOTS); do [ ! -f "$SLOTS_DIR/$i" ] && SLOT=$i && break; done
+[ -z "$SLOT" ] && { echo "Error: no slots" >&2; exit 1; }
+
+PORT_BASE=$((3100 + ($SLOT - 1) * 10))
+PORT_API=$PORT_BASE; PORT_MEET=$(($PORT_BASE+1)); PORT_WEB=$(($PORT_BASE+2))
+
+echo "=== Creating session: $SESSION (slot $SLOT) ==="
+echo "$SESSION" > "$SLOTS_DIR/$SLOT"
+
+# ---- User ----
+SESSION_USER="ses_${SESSION}"
+sudo useradd -m -s /bin/bash "$SESSION_USER" 2>/dev/null || true
+SESSION_UID=$(id -u "$SESSION_USER")
+SESSION_GID=$(id -g "$SESSION_USER")
+SESSION_HOME="/home/$SESSION_USER"
+REPOS_DIR="$SESSION_HOME/repos"
+
+# Session data dir
+SESSION_DIR="$SESSIONS_DIR/$SESSION"
+mkdir -p "$SESSION_DIR"/logs
+chmod 777 "$SESSION_DIR/logs"
+
+# Metadata
+cat > "$SESSION_DIR/meta.json" << META
+{"name":"$SESSION","slot":$SLOT,"user":"$SESSION_USER","ports":{"api":$PORT_API,"meet":$PORT_MEET,"web":$PORT_WEB},"url":"https://${SESSION}.${DOMAIN}","created":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+META
+
+run_as() { sudo -u "$SESSION_USER" bash -c "export PATH=$SYS_PATH:\$PATH; $1"; }
+
+# ---- Claude Code ----
+echo "→ Setting up Claude Code..."
+run_as "mkdir -p $SESSION_HOME/.claude"
+if [ -f /var/kon/config/claude/.credentials.json ]; then
+  sudo cp /var/kon/config/claude/.credentials.json "$SESSION_HOME/.claude/.credentials.json"
+  sudo cp /var/kon/config/claude/settings.json "$SESSION_HOME/.claude/settings.json" 2>/dev/null || true
+  sudo cp /var/kon/config/claude/CLAUDE.md "$SESSION_HOME/.claude/CLAUDE.md" 2>/dev/null || true
+  sudo chown -R "$SESSION_USER:$SESSION_USER" "$SESSION_HOME/.claude"
+  echo "  Claude Code ready"
+else
+  echo "  Warning: no shared credentials found, run 'claude' manually to authenticate"
+fi
+
+# ---- Clone ----
+echo "→ Cloning repos..."
+run_as "mkdir -p $REPOS_DIR"
+for repo in jitsi-meet sonacove sona-config sonacove-electron; do
+  run_as "git clone --reference $GIT_CACHE/$repo.git --dissociate https://github.com/alfaz-studio/$repo.git $REPOS_DIR/$repo 2>&1 | tail -1" &
+done
+wait
+echo "  Repos cloned"
+
+echo "→ Initializing submodules..."
+run_as "cd $REPOS_DIR/jitsi-meet && git config submodule.lib-jitsi-meet.url https://github.com/alfaz-studio/lib-jitsi-meet.git && git submodule update --init --recursive 2>&1 | tail -3"
+echo "  Submodules ready"
+
+# ---- Dependencies ----
+echo "→ Installing dependencies..."
+run_as "cd $REPOS_DIR/jitsi-meet && npm install --legacy-peer-deps 2>&1 | tail -2" &
+run_as "cd $REPOS_DIR/jitsi-meet/lib-jitsi-meet && npm install --legacy-peer-deps 2>&1 | tail -2" &
+run_as "cd $REPOS_DIR/jitsi-meet/excalidraw && npm install --legacy-peer-deps 2>&1 | tail -2" &
+run_as "cd $REPOS_DIR/sonacove && npm install --legacy-peer-deps 2>&1 | tail -2 && npm install @rollup/rollup-linux-x64-gnu 2>&1 | tail -1" &
+run_as "cd $REPOS_DIR/sona-config/api && bun install 2>&1 | tail -2" &
+wait
+echo "  Dependencies installed"
+
+echo "→ Building excalidraw..."
+run_as "cd $REPOS_DIR/jitsi-meet/excalidraw && bash ./build-jitsi.sh 2>&1 | tail -3"
+
+# ---- Docker services (Postgres + API) ----
+echo "→ Starting Docker services..."
+PG_PASSWORD="kon_$(openssl rand -hex 8)"
+AUTH_SECRET="$(openssl rand -hex 32)"
+
+# Generate compose file from template
+export SESSION SESSION_UID SESSION_GID REPOS_DIR PORT_API PG_PASSWORD AUTH_SECRET
+envsubst < /var/kon/config/compose.template.yml > "$SESSION_DIR/docker-compose.yml"
+
+cd "$SESSION_DIR"
+docker compose up -d 2>&1 | tail -5
+echo "  Postgres + API starting"
+
+# Wait for API health
+echo -n "  Waiting for API"
+for i in $(seq 1 60); do
+  if curl -sf "http://127.0.0.1:${PORT_API}/api/health" > /dev/null 2>&1; then
+    echo " ready"
+    break
+  fi
+  echo -n "."
+  sleep 2
+done
+
+# ---- Native dev servers (frontends) ----
+echo "→ Starting frontend dev servers..."
+
+run_as "cd $REPOS_DIR/jitsi-meet && nohup npx vite --port $PORT_MEET --host 127.0.0.1 > $SESSION_DIR/logs/meet.log 2>&1 & echo \$! > $SESSION_DIR/logs/meet.pid"
+echo "  jitsi-meet on :$PORT_MEET"
+
+run_as "cd $REPOS_DIR/sonacove && nohup npx astro dev --port $PORT_WEB --host 127.0.0.1 > $SESSION_DIR/logs/web.log 2>&1 & echo \$! > $SESSION_DIR/logs/web.pid"
+echo "  sonacove on :$PORT_WEB"
+
+# ---- Nginx ----
+echo "→ Configuring Nginx..."
+sudo tee /etc/nginx/sessions/${SESSION}.conf > /dev/null << NGINXEOF
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${SESSION}.${DOMAIN};
+    ssl_certificate /etc/nginx/ssl/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/${DOMAIN}/key.pem;
+
+    # Proxy timeouts for Vite dev server (initial dep optimization can be slow)
+    proxy_connect_timeout 10s;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 60s;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:${PORT_API}/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /meet/ {
+        proxy_pass https://127.0.0.1:${PORT_MEET}/meet/;
+        proxy_ssl_verify off;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host localhost;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /xmpp-websocket {
+        proxy_pass http://127.0.0.1:5280/xmpp-websocket;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:${PORT_WEB};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host localhost;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+NGINXEOF
+
+sudo nginx -t && sudo systemctl reload nginx
+echo "  Nginx ready"
+
+echo ""
+echo "========================================"
+echo "  Session '$SESSION' ready!"
+echo "========================================"
+echo "  URL: https://${SESSION}.${DOMAIN}"
+echo "    /        → sonacove (web)"
+echo "    /meet/   → jitsi-meet"
+echo "    /api/    → API"
+echo ""
+echo "  Docker: postgres + api (kon-${SESSION} network)"
+echo "  Native: meet (:$PORT_MEET) + web (:$PORT_WEB)"
+echo "  User: $SESSION_USER | Repos: $REPOS_DIR"
+echo "========================================"
+echo ""
+
+# Drop into session shell (tmux-aware)
+if [ -n "$TMUX" ]; then
+  tmux new-window -n "$SESSION" "sudo -iu $SESSION_USER bash -c 'cd ~/repos && exec bash'"
+  echo "  Switched to tmux window '$SESSION'"
+else
+  exec sudo -iu "$SESSION_USER"
+fi

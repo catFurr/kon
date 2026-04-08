@@ -1,0 +1,36 @@
+---
+- name: Install certbot and cloudflare plugin
+  apt:
+    name:
+      - certbot
+      - python3-certbot-nginx
+      - python3-certbot-dns-cloudflare
+    state: present
+
+- name: Create cloudflare credentials file
+  copy:
+    dest: /root/.cloudflare-credentials
+    content: |
+      dns_cloudflare_api_token = {{ cloudflare_api_token }}
+    mode: "0600"
+  when: cloudflare_api_token is defined
+
+- name: Obtain wildcard SSL certificate
+  command: >
+    certbot certonly
+    --dns-cloudflare
+    --dns-cloudflare-credentials /root/.cloudflare-credentials
+    -d {{ domain }}
+    -d "*.{{ domain }}"
+    --email {{ certbot_email }}
+    --agree-tos
+    --non-interactive
+  args:
+    creates: /etc/letsencrypt/live/{{ domain }}/fullchain.pem
+  when: cloudflare_api_token is defined
+
+- name: Enable certbot auto-renewal timer
+  systemd:
+    name: certbot.timer
+    enabled: true
+    state: started

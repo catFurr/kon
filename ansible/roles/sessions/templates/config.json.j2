@@ -1,0 +1,11 @@
+{
+  "repos_dir": "repos",
+  "repos": [
+{% for repo in kon_repos %}
+    {
+      "name": "{{ repo.name }}",
+      "url": "{{ repo.url }}"
+    }{{ "," if not loop.last else "" }}
+{% endfor %}
+  ]
+}

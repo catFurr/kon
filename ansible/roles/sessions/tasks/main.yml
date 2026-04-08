@@ -1,0 +1,162 @@
+---
+# ── Install dependencies ───────────────────────────────────────────────────
+
+- name: Install base packages for sessions
+  apt:
+    name:
+      - tmux
+      - git
+      - curl
+      - unzip
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install Node.js via NodeSource
+  shell: |
+    if ! command -v node &>/dev/null; then
+      curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+      apt-get install -y nodejs
+    fi
+  args:
+    creates: /usr/bin/node
+
+- name: Install GitHub CLI
+  shell: |
+    if ! command -v gh &>/dev/null; then
+      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+      chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+      apt-get update
+      apt-get install -y gh
+    fi
+  args:
+    creates: /usr/bin/gh
+
+- name: Install Claude Code
+  shell: |
+    if ! command -v claude &>/dev/null; then
+      npm install -g @anthropic-ai/claude-code
+    fi
+  args:
+    creates: /usr/local/bin/claude
+
+# ── Set up kon directory structure ─────────────────────────────────────────
+
+- name: Create kon directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /opt/kon
+    - /opt/kon/repos
+    - /opt/kon/sessions
+    - /opt/kon/.config/gh
+
+# ── Copy orchestrator ──────────────────────────────────────────────────────
+
+- name: Copy kon orchestrator
+  copy:
+    src: "{{ playbook_dir }}/../../orchestrator/kon.mjs"
+    dest: /opt/kon/kon.mjs
+    mode: "0755"
+
+- name: Create kon symlink
+  file:
+    src: /opt/kon/kon.mjs
+    dest: /usr/local/bin/kon
+    state: link
+    force: true
+
+# ── Write config ───────────────────────────────────────────────────────────
+
+- name: Write kon config
+  template:
+    src: config.json.j2
+    dest: /opt/kon/config.json
+    mode: "0644"
+
+# ── Authenticate GitHub CLI ────────────────────────────────────────────────
+
+- name: Write gh CLI hosts config
+  copy:
+    dest: /opt/kon/.config/gh/hosts.yml
+    content: |
+      github.com:
+        oauth_token: {{ github_token }}
+        user: {{ github_user }}
+        git_protocol: https
+    mode: "0600"
+  when: github_token is defined
+
+# ── Claude Code API key ───────────────────────────────────────────────────
+
+- name: Write shared env file for sessions
+  copy:
+    dest: /opt/kon/env
+    content: |
+      ANTHROPIC_API_KEY={{ anthropic_api_key }}
+    mode: "0640"
+    group: root
+  when: anthropic_api_key is defined
+
+# ── Set up systemd timer for repo sync ─────────────────────────────────────
+
+- name: Install kon-sync service
+  template:
+    src: kon-sync.service.j2
+    dest: /etc/systemd/system/kon-sync.service
+    mode: "0644"
+  notify: reload systemd
+
+- name: Install kon-sync timer
+  template:
+    src: kon-sync.timer.j2
+    dest: /etc/systemd/system/kon-sync.timer
+    mode: "0644"
+  notify: reload systemd
+
+- name: Enable and start kon-sync timer
+  systemd:
+    name: kon-sync.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# ── Initial repo sync ─────────────────────────────────────────────────────
+
+- name: Run initial repo sync
+  command: /usr/local/bin/kon sync
+  register: sync_result
+  changed_when: "'Cloning' in sync_result.stdout"
+
+# ── Create kon admin user ──────────────────────────────────────────────────
+
+- name: Create kon admin user
+  user:
+    name: kon
+    shell: /bin/bash
+    groups: sudo
+    create_home: true
+    state: present
+
+- name: Allow kon user passwordless sudo for user management
+  copy:
+    dest: /etc/sudoers.d/kon
+    content: |
+      kon ALL=(ALL) NOPASSWD: /usr/local/bin/kon, /usr/sbin/useradd, /usr/sbin/userdel, /usr/bin/pkill, /usr/bin/passwd
+    mode: "0440"
+    validate: "visudo -cf %s"
+
+# ── Shell alias for convenience ────────────────────────────────────────────
+
+- name: Add kon alias for admin user
+  lineinfile:
+    path: /home/kon/.bashrc
+    line: 'alias kon="sudo /usr/local/bin/kon"'
+    create: true
+    owner: kon
+    group: kon

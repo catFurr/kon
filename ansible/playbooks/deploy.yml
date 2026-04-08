@@ -1,0 +1,10 @@
+---
+- name: Deploy static site
+  hosts: vps
+  become: true
+  vars:
+    domain: "{{ domain }}"
+    deploy_root: /var/www/{{ domain }}
+
+  roles:
+    - deploy

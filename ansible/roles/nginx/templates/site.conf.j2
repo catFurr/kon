@@ -1,0 +1,51 @@
+# HTTP -> HTTPS redirect (all domains)
+server {
+    listen 80;
+    server_name {{ domain }} www.{{ domain }} *.{{ domain }};
+
+    # Allow ACME challenge for certbot
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# Production site
+server {
+    listen 443 ssl;
+    server_name {{ domain }} www.{{ domain }};
+
+    ssl_certificate /etc/letsencrypt/live/{{ domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ domain }}/privkey.pem;
+
+    root {{ deploy_root }}/production;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ $uri.html =404;
+    }
+
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}
+
+# Preview deployments (wildcard subdomain)
+server {
+    listen 443 ssl;
+    server_name ~^(?<subdomain>.+)\.{{ domain | regex_escape }}$;
+
+    ssl_certificate /etc/letsencrypt/live/{{ domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ domain }}/privkey.pem;
+
+    root {{ deploy_root }}/previews/$subdomain;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ $uri.html =404;
+    }
+}

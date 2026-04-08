@@ -1,0 +1,56 @@
+---
+- name: Ensure branch deploy directory exists
+  file:
+    path: "{{ deploy_root }}/previews/{{ branch_slug }}"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: "0755"
+  when: branch_slug is defined and branch_slug | length > 0
+
+- name: Deploy to branch folder
+  synchronize:
+    src: "{{ dist_path }}/"
+    dest: "{{ deploy_root }}/previews/{{ branch_slug }}/"
+    delete: true
+  when: branch_slug is defined and branch_slug | length > 0
+
+- name: Set ownership on branch deploy
+  file:
+    path: "{{ deploy_root }}/previews/{{ branch_slug }}"
+    owner: www-data
+    group: www-data
+    recurse: true
+  when: branch_slug is defined and branch_slug | length > 0
+
+- name: Ensure commit deploy directory exists
+  file:
+    path: "{{ deploy_root }}/previews/{{ short_sha }}"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: "0755"
+
+- name: Deploy to commit folder
+  synchronize:
+    src: "{{ dist_path }}/"
+    dest: "{{ deploy_root }}/previews/{{ short_sha }}/"
+    delete: true
+
+- name: Set ownership on commit deploy
+  file:
+    path: "{{ deploy_root }}/previews/{{ short_sha }}"
+    owner: www-data
+    group: www-data
+    recurse: true
+
+- name: Update production symlink
+  file:
+    src: "{{ deploy_root }}/previews/{{ short_sha }}"
+    dest: "{{ deploy_root }}/production"
+    state: link
+    force: true
+    owner: www-data
+    group: www-data
+  when: environment_name == "production"
+  notify: reload nginx

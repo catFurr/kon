@@ -1,0 +1,46 @@
+---
+- name: Update apt cache
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install base packages
+  apt:
+    name:
+      - curl
+      - unzip
+      - rsync
+      - ufw
+    state: present
+
+- name: Allow SSH through firewall
+  ufw:
+    rule: allow
+    port: "22"
+
+- name: Allow HTTP through firewall
+  ufw:
+    rule: allow
+    port: "80"
+
+- name: Allow HTTPS through firewall
+  ufw:
+    rule: allow
+    port: "443"
+
+- name: Enable firewall
+  ufw:
+    state: enabled
+    policy: deny
+
+- name: Create deploy directory structure
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: "0755"
+  loop:
+    - "{{ deploy_root }}"
+    - "{{ deploy_root }}/production"
+    - "{{ deploy_root }}/previews"

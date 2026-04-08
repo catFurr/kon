@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+SESSION=${1:?Usage: kon-enter <session-name>}
+SESSION_DIR="/var/kon/sessions/$SESSION"
+SESSION_USER="ses_${SESSION}"
+[ -d "$SESSION_DIR" ] || { echo "Error: session '$SESSION' not found" >&2; exit 1; }
+
+if [ -n "$TMUX" ]; then
+  if tmux list-windows -F '#{window_name}' | grep -q "^${SESSION}$"; then
+    tmux select-window -t "$SESSION"
+  else
+    tmux new-window -n "$SESSION" "sudo -iu $SESSION_USER bash -c 'cd ~/repos && exec bash'"
+  fi
+else
+  exec sudo -iu "$SESSION_USER"
+fi

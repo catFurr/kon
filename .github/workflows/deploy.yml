@@ -1,0 +1,197 @@
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      domain:
+        required: true
+        type: string
+        description: "Domain name (e.g. example.com)"
+      sha:
+        required: false
+        type: string
+        description: "Commit SHA (defaults to github.sha)"
+      branch_slug:
+        required: false
+        type: string
+        description: "Branch slug for preview URL (e.g. my-feature)"
+      environment:
+        required: true
+        type: string
+        description: "production or preview"
+      artifact_name:
+        required: true
+        type: string
+        description: "Name of the uploaded build artifact"
+    secrets:
+      VPS_SSH_KEY:
+        required: true
+      VPS_HOST:
+        required: true
+      CLOUDFLARE_API_TOKEN:
+        required: false
+    outputs:
+      commit_url:
+        description: "Commit-specific preview URL"
+        value: ${{ jobs.deploy.outputs.commit_url }}
+      branch_url:
+        description: "Branch-specific preview URL"
+        value: ${{ jobs.deploy.outputs.branch_url }}
+      production_url:
+        description: "Production URL"
+        value: ${{ jobs.deploy.outputs.production_url }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    outputs:
+      commit_url: ${{ steps.urls.outputs.commit_url }}
+      branch_url: ${{ steps.urls.outputs.branch_url }}
+      production_url: ${{ steps.urls.outputs.production_url }}
+      short_sha: ${{ steps.urls.outputs.short_sha }}
+
+    steps:
+      - name: Checkout kon
+        uses: actions/checkout@v4
+        with:
+          repository: catFurr/kon
+          ref: main
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: dist/
+
+      - name: Compute URLs
+        id: urls
+        run: |
+          SHA="${{ inputs.sha || github.sha }}"
+          SHORT_SHA=$(echo "$SHA" | head -c 7)
+          DOMAIN="${{ inputs.domain }}"
+
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "commit_url=https://${SHORT_SHA}.${DOMAIN}" >> $GITHUB_OUTPUT
+
+          if [ "${{ inputs.environment }}" = "production" ]; then
+            echo "production_url=https://${DOMAIN}" >> $GITHUB_OUTPUT
+            echo "branch_url=" >> $GITHUB_OUTPUT
+          else
+            SLUG="${{ inputs.branch_slug }}"
+            echo "branch_url=https://${SLUG}.${DOMAIN}" >> $GITHUB_OUTPUT
+            echo "production_url=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Install Ansible
+        run: pip install ansible
+
+      - name: Write Ansible inventory
+        run: |
+          cat > ansible/inventory/hosts.yml << EOF
+          all:
+            hosts:
+              vps:
+                ansible_host: ${{ secrets.VPS_HOST }}
+                ansible_user: root
+                ansible_ssh_private_key_file: ~/.ssh/deploy_key
+          EOF
+
+      - name: Provision server (first run only)
+        working-directory: ansible
+        run: |
+          ansible-playbook playbooks/provision.yml \
+            -e "domain=${{ inputs.domain }}" \
+            -e "cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}"
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "false"
+
+      - name: Deploy static files
+        working-directory: ansible
+        run: |
+          ansible-playbook playbooks/deploy.yml \
+            -e "domain=${{ inputs.domain }}" \
+            -e "dist_path=${{ github.workspace }}/dist" \
+            -e "short_sha=${{ steps.urls.outputs.short_sha }}" \
+            -e "branch_slug=${{ inputs.branch_slug || '' }}" \
+            -e "environment_name=${{ inputs.environment }}"
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "false"
+
+      - name: Deployment summary
+        run: |
+          SHORT_SHA="${{ steps.urls.outputs.short_sha }}"
+          DOMAIN="${{ inputs.domain }}"
+          echo "## Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${SHORT_SHA}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit URL:** ${{ steps.urls.outputs.commit_url }}" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ steps.urls.outputs.branch_url }}" ]; then
+            echo "- **Branch URL:** ${{ steps.urls.outputs.branch_url }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ -n "${{ steps.urls.outputs.production_url }}" ]; then
+            echo "- **Production URL:** ${{ steps.urls.outputs.production_url }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  comment:
+    needs: deploy
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Post or update preview comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const shortSha = '${{ needs.deploy.outputs.short_sha }}';
+            const commitUrl = '${{ needs.deploy.outputs.commit_url }}';
+            const branchUrl = '${{ needs.deploy.outputs.branch_url }}';
+            const prodUrl = '${{ needs.deploy.outputs.production_url }}';
+
+            const rows = [];
+            if (branchUrl) rows.push(`| Branch | ${branchUrl} |`);
+            if (commitUrl) rows.push(`| Commit | ${commitUrl} |`);
+            if (prodUrl) rows.push(`| Production | ${prodUrl} |`);
+
+            const body = [
+              '### Preview Deployment',
+              '',
+              '| Type | URL |',
+              '|------|-----|',
+              ...rows,
+              '',
+              `_Deployed from \`${shortSha}\`_`,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const marker = '### Preview Deployment';
+            const existing = comments.find(c => c.body.startsWith(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
