@@ -89,6 +89,13 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-ansible
+          restore-keys: pip-${{ runner.os }}-
+
       - name: Install Ansible
         run: pip install ansible
 
@@ -102,15 +109,6 @@ jobs:
                 ansible_user: root
                 ansible_ssh_private_key_file: ~/.ssh/deploy_key
           EOF
-
-      - name: Provision server (first run only)
-        working-directory: ansible
-        run: |
-          ansible-playbook playbooks/provision.yml \
-            -e "domain=${{ inputs.domain }}" \
-            -e "cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}"
-        env:
-          ANSIBLE_HOST_KEY_CHECKING: "false"
 
       - name: Deploy static files
         working-directory: ansible

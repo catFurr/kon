@@ -94,14 +94,27 @@
 
 # ── Claude Code API key ───────────────────────────────────────────────────
 
+- name: Create kon group for shared secrets
+  group:
+    name: kon-sessions
+    state: present
+
 - name: Write shared env file for sessions
   copy:
     dest: /opt/kon/env
     content: |
       ANTHROPIC_API_KEY={{ anthropic_api_key }}
     mode: "0640"
-    group: root
+    owner: root
+    group: kon-sessions
   when: anthropic_api_key is defined
+
+- name: Restrict gh config to kon-sessions group
+  file:
+    path: /opt/kon/.config/gh/hosts.yml
+    mode: "0640"
+    group: kon-sessions
+  when: github_token is defined
 
 # ── Set up systemd timer for repo sync ─────────────────────────────────────
 
@@ -143,11 +156,11 @@
     create_home: true
     state: present
 
-- name: Allow kon user passwordless sudo for user management
+- name: Allow kon user passwordless sudo for session management
   copy:
     dest: /etc/sudoers.d/kon
     content: |
-      kon ALL=(ALL) NOPASSWD: /usr/local/bin/kon, /usr/sbin/useradd, /usr/sbin/userdel, /usr/bin/pkill, /usr/bin/passwd
+      kon ALL=(ALL) NOPASSWD: /usr/local/bin/kon
     mode: "0440"
     validate: "visudo -cf %s"
 

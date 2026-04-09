@@ -10,6 +10,13 @@
     state: absent
   notify: reload nginx
 
+- name: Create htpasswd for preview auth
+  command: htpasswd -cb /etc/nginx/.htpasswd {{ preview_htpasswd.user }} {{ preview_htpasswd.pass }}
+  args:
+    creates: /etc/nginx/.htpasswd
+  when: preview_htpasswd is defined and preview_htpasswd
+  notify: reload nginx
+
 - name: Deploy site nginx config
   template:
     src: site.conf.j2
