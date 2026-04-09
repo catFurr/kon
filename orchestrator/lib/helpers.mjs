@@ -1,0 +1,142 @@
+import { execSync } from "node:child_process";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// ── Paths ───────────────────────────────────────────────────────────────────
+
+export const KON_HOME = "/opt/kon";
+export const CONFIG_PATH = join(KON_HOME, "config.json");
+export const REPOS_DIR = join(KON_HOME, "repos");
+export const SESSIONS_DIR = join(KON_HOME, "sessions");
+export const KON_ENV = join(KON_HOME, "env");
+export const SYNC_MARKER = join(REPOS_DIR, ".last-sync");
+export const SESSION_USER_PREFIX = "kon-";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+export const TEMPLATES_DIR = join(__dirname, "..", "templates");
+
+// ── Config ──────────────────────────────────────────────────────────────────
+
+export function loadConfig() {
+  if (!existsSync(CONFIG_PATH)) {
+    console.error(`Config not found at ${CONFIG_PATH}`);
+    process.exit(1);
+  }
+  return JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
+}
+
+// ── Sessions data ───────────────────────────────────────────────────────────
+
+export function loadSessions() {
+  const path = join(SESSIONS_DIR, "sessions.json");
+  if (!existsSync(path)) return {};
+  return JSON.parse(readFileSync(path, "utf-8"));
+}
+
+export function saveSessions(sessions) {
+  mkdirSync(SESSIONS_DIR, { recursive: true });
+  writeFileSync(join(SESSIONS_DIR, "sessions.json"), JSON.stringify(sessions, null, 2));
+}
+
+export function requireSession(name) {
+  if (!name) {
+    console.error("Usage: kon <command> <session-name>");
+    process.exit(1);
+  }
+  const sessions = loadSessions();
+  if (!sessions[name]) {
+    console.error(`Session "${name}" does not exist. Use 'kon list' to see sessions.`);
+    process.exit(1);
+  }
+  return { sessions, session: sessions[name] };
+}
+
+// ── Shell helpers ───────────────────────────────────────────────────────────
+
+export function run(cmd, opts = {}) {
+  return execSync(cmd, { encoding: "utf-8", stdio: opts.quiet ? "pipe" : "inherit", ...opts }).trim();
+}
+
+export function runQuiet(cmd) {
+  try {
+    return execSync(cmd, { encoding: "utf-8", stdio: "pipe" }).trim();
+  } catch {
+    return "";
+  }
+}
+
+// ── Utilities ───────────────────────────────────────────────────────────────
+
+export function slugify(str) {
+  return str.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase().slice(0, 32);
+}
+
+export function sessionUserName(name) {
+  return `${SESSION_USER_PREFIX}${name}`;
+}
+
+export function sessionHome(name) {
+  return `/home/${sessionUserName(name)}`;
+}
+
+export function tmuxSessionName(name) {
+  return `kon-${name}`;
+}
+
+export function userExists(username) {
+  return runQuiet(`id ${username} 2>/dev/null`) !== "";
+}
+
+export function tmuxSessionExists(sessionName) {
+  return runQuiet(`tmux has-session -t ${sessionName} 2>/dev/null; echo $?`) === "0";
+}
+
+export function allocatePorts(config, sessions) {
+  const count = config.ports_per_session || 10;
+  const start = config.port_range_start || 4000;
+  const end = config.port_range_end || 9000;
+  const used = new Set();
+  for (const s of Object.values(sessions)) {
+    if (s.ports) s.ports.forEach((p) => used.add(p));
+  }
+  const ports = [];
+  for (let p = start; p < end && ports.length < count; p++) {
+    if (!used.has(p)) ports.push(p);
+  }
+  return ports;
+}
+
+export function readSliceMemoryMB(slice) {
+  const raw = runQuiet(`cat /sys/fs/cgroup/${slice}/memory.current 2>/dev/null`);
+  return raw ? Math.round(parseInt(raw) / 1024 / 1024) : null;
+}
+
+export function isSyncFresh(maxAgeMinutes = 5) {
+  if (!existsSync(SYNC_MARKER)) return false;
+  const age = (Date.now() - statSync(SYNC_MARKER).mtimeMs) / 60000;
+  return age < maxAgeMinutes;
+}
+
+export function parseFlags(args) {
+  const flags = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--creator" && args[i + 1]) {
+      flags.creator = args[++i];
+    } else if (args[i] === "--ssh-key" && args[i + 1]) {
+      flags.sshKey = args[++i];
+    } else if (args[i] === "--days" && args[i + 1]) {
+      flags.days = parseInt(args[++i], 10);
+    } else if (!args[i].startsWith("--")) {
+      flags.positional = flags.positional || args[i];
+    }
+  }
+  return flags;
+}
+
+// ── Template rendering ──────────────────────────────────────────────────────
+
+export function renderTemplate(templatePath, vars) {
+  const template = readFileSync(templatePath, "utf-8");
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? "");
+}

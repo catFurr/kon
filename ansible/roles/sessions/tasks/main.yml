@@ -68,18 +68,33 @@
 
 # ── Copy orchestrator ──────────────────────────────────────────────────────
 
-- name: Copy kon orchestrator
+- name: Copy kon orchestrator directory
   copy:
-    src: "{{ playbook_dir }}/../../orchestrator/kon.mjs"
-    dest: /opt/kon/kon.mjs
+    src: "{{ playbook_dir }}/../../orchestrator/"
+    dest: /opt/kon/orchestrator/
     mode: "0755"
+    directory_mode: "0755"
 
 - name: Create kon symlink
   file:
-    src: /opt/kon/kon.mjs
+    src: /opt/kon/orchestrator/kon.mjs
     dest: /usr/local/bin/kon
     state: link
     force: true
+
+- name: Create nginx sessions directory
+  file:
+    path: /etc/nginx/sessions
+    state: directory
+    mode: "0755"
+
+- name: Include session nginx configs
+  lineinfile:
+    path: /etc/nginx/nginx.conf
+    line: "    include /etc/nginx/sessions/*.conf;"
+    insertbefore: "^\\}"
+    state: present
+  notify: reload nginx
 
 # ── Write config ───────────────────────────────────────────────────────────
 
