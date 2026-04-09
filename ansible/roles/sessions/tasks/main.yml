@@ -42,6 +42,16 @@
     fi
   args:
     creates: /usr/local/bin/claude
+  when: anthropic_api_key is defined and anthropic_api_key | length > 0
+
+- name: Install OpenAI Codex
+  shell: |
+    if ! command -v codex &>/dev/null; then
+      npm install -g @openai/codex
+    fi
+  args:
+    creates: /usr/local/bin/codex
+  when: openai_api_key is defined and openai_api_key | length > 0
 
 # ── Set up kon directory structure ─────────────────────────────────────────
 
@@ -92,7 +102,7 @@
     mode: "0600"
   when: github_token is defined
 
-# ── Claude Code API key ───────────────────────────────────────────────────
+# ── AI tool API keys ──────────────────────────────────────────────────────
 
 - name: Create kon group for shared secrets
   group:
@@ -103,11 +113,16 @@
   copy:
     dest: /opt/kon/env
     content: |
+      {% if anthropic_api_key is defined and anthropic_api_key | length > 0 %}
       ANTHROPIC_API_KEY={{ anthropic_api_key }}
+      {% endif %}
+      {% if openai_api_key is defined and openai_api_key | length > 0 %}
+      OPENAI_API_KEY={{ openai_api_key }}
+      {% endif %}
     mode: "0640"
     owner: root
     group: kon-sessions
-  when: anthropic_api_key is defined
+  when: (anthropic_api_key is defined and anthropic_api_key | length > 0) or (openai_api_key is defined and openai_api_key | length > 0)
 
 - name: Restrict gh config to kon-sessions group
   file:
