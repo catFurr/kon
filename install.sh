@@ -79,6 +79,8 @@ read_secret() {
   local value
   read -rsp "$(echo -e "  ${CYAN}$prompt: ${RESET}")" value < /dev/tty
   echo "" # newline after hidden input
+  # Strip carriage returns and leading/trailing whitespace (common from browser paste)
+  value=$(echo "$value" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
   eval "$__resultvar=\$value"
 }
 
@@ -94,6 +96,8 @@ read_input() {
   else
     read -rp "$(echo -e "  ${CYAN}$prompt${RESET}: ")" value < /dev/tty
   fi
+  # Strip carriage returns and leading/trailing whitespace (common from browser paste)
+  value=$(echo "$value" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
   eval "$__resultvar=\$value"
 }
 
@@ -177,10 +181,16 @@ api_call() {
     curl_args+=(--data "$data")
   fi
 
-  response=$(curl "${curl_args[@]}" "$url" 2>&1) || {
-    error "Network error: could not reach $url"
+  local curl_stderr
+  curl_stderr=$(mktemp)
+  response=$(curl "${curl_args[@]}" "$url" 2>"$curl_stderr") || {
+    local curl_err
+    curl_err=$(cat "$curl_stderr")
+    rm -f "$curl_stderr"
+    error "Network error: could not reach $url${curl_err:+ ($curl_err)}" >&2
     return 1
   }
+  rm -f "$curl_stderr"
 
   http_code=$(echo "$response" | tail -1)
   body=$(echo "$response" | sed '$d')
@@ -188,14 +198,14 @@ api_call() {
 
   if [[ "$http_code" -ge 400 ]]; then
     if [[ "$http_code" == "429" ]]; then
-      warn "Rate limited. Waiting 10s..."
+      warn "Rate limited. Waiting 10s..." >&2
       sleep 10
       api_call "$@" # retry once
       return $?
     fi
     local err_msg
     err_msg=$(echo "$body" | jq -r '.message // .errors[0].message // .error // "Unknown error"' 2>/dev/null || echo "HTTP $http_code")
-    error "API error ($http_code): $err_msg"
+    error "API error ($http_code): $err_msg" >&2
     return 1
   fi
 
@@ -249,23 +259,44 @@ step_1_domain() {
   info "Create one at: ${BOLD}https://dash.cloudflare.com/profile/api-tokens${RESET}"
   echo ""
 
-  read_secret "Cloudflare API token" CF_TOKEN
+  # Token entry with inline retry
+  while true; do
+    read_secret "Cloudflare API token" CF_TOKEN
 
-  # Verify token
-  info "Verifying token..."
-  local verify_result
-  verify_result=$(cf_api GET "/user/tokens/verify") || {
-    error "Invalid token. Check permissions and try again."
-    return 1
-  }
+    if [[ -z "$CF_TOKEN" ]]; then
+      error "Token cannot be empty."
+      echo ""
+      continue
+    fi
 
-  local status
-  status=$(echo "$verify_result" | jq -r '.result.status')
-  if [[ "$status" != "active" ]]; then
-    error "Token status: $status (expected 'active')"
-    return 1
-  fi
-  success "Token verified"
+    # Verify token
+    info "Verifying token..."
+    local verify_result
+    verify_result=$(cf_api GET "/user/tokens/verify") || {
+      error "Could not verify token. Check that you pasted the full token and it has the correct permissions."
+      echo ""
+      if ! confirm "Try another token?" "Y"; then
+        return 1
+      fi
+      echo ""
+      continue
+    }
+
+    local status
+    status=$(echo "$verify_result" | jq -r '.result.status')
+    if [[ "$status" != "active" ]]; then
+      error "Token status: $status (expected 'active')"
+      echo ""
+      if ! confirm "Try another token?" "Y"; then
+        return 1
+      fi
+      echo ""
+      continue
+    fi
+
+    success "Token verified"
+    break
+  done
 
   # List zones
   while true; do
