@@ -92,8 +92,19 @@ export function tmuxSessionExists(sessionName) {
   return runQuiet(`tmux has-session -t ${sessionName} 2>/dev/null; echo $?`) === "0";
 }
 
+export function countServices(config) {
+  let count = 0;
+  for (const repo of config.repos || []) {
+    const services = (repo.services || []).filter((s) => s.type !== "docker");
+    count += services.length || 1; // at least 1 per repo for auto-detect fallback
+  }
+  return count;
+}
+
 export function allocatePorts(config, sessions) {
-  const count = config.ports_per_session || 10;
+  const serviceCount = countServices(config);
+  const minPorts = config.ports_per_session || 10;
+  const count = Math.max(minPorts, serviceCount + 5); // services + buffer
   const start = config.port_range_start || 4000;
   const end = config.port_range_end || 9000;
   const used = new Set();

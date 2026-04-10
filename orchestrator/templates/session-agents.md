@@ -5,11 +5,14 @@ Isolated dev environment managed by [kon](https://github.com/catFurr/kon).
 ## Session Details
 - Name: {{name}}
 - User: {{username}}
-- Dev server: https://{{name}}.{{domain}}
+- Primary URL: https://{{name}}.{{domain}}
 - Repos directory: {{reposDir}}
 
 ## Repositories
 {{repoList}}
+
+## Services
+{{serviceList}}
 
 ## Development Workflow
 

@@ -48,6 +48,7 @@ jobs:
             -e '{"repos": ${{ secrets.KON_REPOS }}}' \
             -e "github_token=${{ secrets.KON_GITHUB_TOKEN }}" \
             -e "github_user=${{ inputs.github_user }}" \
-            -e "anthropic_api_key=${{ secrets.ANTHROPIC_API_KEY }}"
+            -e "anthropic_api_key=${{ secrets.ANTHROPIC_API_KEY }}" \
+            -e "openai_api_key=${{ secrets.OPENAI_API_KEY }}"
         env:
           ANSIBLE_HOST_KEY_CHECKING: "false"

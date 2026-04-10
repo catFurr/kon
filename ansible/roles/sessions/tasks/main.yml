@@ -12,6 +12,20 @@
     update_cache: true
     cache_valid_time: 3600
 
+- name: Install Docker
+  shell: |
+    if ! command -v docker &>/dev/null; then
+      curl -fsSL https://get.docker.com | sh
+    fi
+  args:
+    creates: /usr/bin/docker
+
+- name: Ensure Docker is running
+  service:
+    name: docker
+    state: started
+    enabled: true
+
 - name: Install Node.js via NodeSource
   shell: |
     if ! command -v node &>/dev/null; then

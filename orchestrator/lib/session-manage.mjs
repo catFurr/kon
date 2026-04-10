@@ -8,7 +8,7 @@ import {
   userExists, tmuxSessionExists, readSliceMemoryMB,
   REPOS_DIR, SESSIONS_DIR, SYNC_MARKER,
 } from "./helpers.mjs";
-import { removeNginxConfig } from "./session-create.mjs";
+import { removeNginxConfigs } from "./session-create.mjs";
 
 // ── List ────────────────────────────────────────────────────────────────────
 
@@ -20,15 +20,16 @@ export function cmdList() {
     return;
   }
 
-  console.log(`\n  ${"Name".padEnd(20)} ${"Creator".padEnd(12)} ${"URL".padEnd(35)} ${"Tmux"}`);
-  console.log(`  ${"─".repeat(20)} ${"─".repeat(12)} ${"─".repeat(35)} ${"─".repeat(8)}`);
+  console.log(`\n  ${"Name".padEnd(20)} ${"Creator".padEnd(12)} ${"URL".padEnd(35)} ${"Svcs".padEnd(6)} ${"Tmux"}`);
+  console.log(`  ${"─".repeat(20)} ${"─".repeat(12)} ${"─".repeat(35)} ${"─".repeat(6)} ${"─".repeat(8)}`);
 
   for (const name of names) {
     const s = sessions[name];
     const tmuxAlive = tmuxSessionExists(tmuxSessionName(name)) ? "active" : "stopped";
     const creator = (s.creator || "-").padEnd(12);
     const url = (s.url || "-").padEnd(35);
-    console.log(`  ${name.padEnd(20)} ${creator} ${url} ${tmuxAlive}`);
+    const svcCount = String(s.services ? s.services.length : 1).padEnd(6);
+    console.log(`  ${name.padEnd(20)} ${creator} ${url} ${svcCount} ${tmuxAlive}`);
   }
   console.log();
 }
@@ -57,7 +58,7 @@ export function cmdJoin(name) {
 // ── Delete ──────────────────────────────────────────────────────────────────
 
 export function cmdDelete(name) {
-  const { sessions } = requireSession(name);
+  const { sessions, session: s } = requireSession(name);
   const username = sessionUserName(name);
   const tmuxName = tmuxSessionName(name);
 
@@ -68,9 +69,17 @@ export function cmdDelete(name) {
     console.log("  Killed tmux session.");
   }
 
-  // Remove nginx config
-  removeNginxConfig(name);
-  console.log("  Removed nginx config.");
+  // Stop Docker containers for this session
+  const hasDockerServices = s.services && s.services.some((svc) => svc.type === "docker");
+  if (hasDockerServices) {
+    console.log("  Stopping Docker containers...");
+    runQuiet(`docker compose --project-name kon-${name} down 2>/dev/null`);
+    runQuiet(`docker network rm kon-${name} 2>/dev/null`);
+  }
+
+  // Remove all nginx configs for this session
+  removeNginxConfigs(name);
+  console.log("  Removed nginx configs.");
 
   runQuiet(`pkill -u ${username}`);
   runQuiet("sleep 1");
@@ -113,6 +122,18 @@ export function cmdInfo(name) {
   console.log(`  Ports:   ${s.ports ? s.ports.join(", ") : "-"}`);
   if (s.url) console.log(`  URL:     ${s.url}`);
 
+  // Show all services
+  if (s.services && s.services.length > 0) {
+    console.log(`  Services:`);
+    for (const svc of s.services) {
+      if (svc.type === "docker") {
+        console.log(`    ${svc.label}: docker (${svc.repoName})`);
+      } else {
+        console.log(`    ${svc.label}: port ${svc.port} — ${svc.url || "-"}`);
+      }
+    }
+  }
+
   const du = runQuiet(`du -sh ${home} 2>/dev/null`);
   if (du) console.log(`  Disk:    ${du.split("\t")[0]}`);
 
@@ -153,9 +174,14 @@ export function cmdSync() {
         ) || "main";
       runQuiet(`git -C ${dest} checkout ${defaultBranch}`);
       runQuiet(`git -C ${dest} reset --hard origin/${defaultBranch}`);
+      if (repo.submodules) {
+        console.log(`  Updating submodules for ${repo.name}...`);
+        runQuiet(`git -C ${dest} submodule update --init --recursive`);
+      }
     } else {
+      const cloneFlags = repo.submodules ? " --recurse-submodules" : "";
       console.log(`  Cloning ${repo.name}...`);
-      run(`git clone ${repo.url} ${dest}`, { quiet: true });
+      run(`git clone${cloneFlags} ${repo.url} ${dest}`, { quiet: true });
     }
   }
 
