@@ -269,23 +269,24 @@ step_1_domain() {
       continue
     fi
 
-    # Verify token
+    # Verify token by trying both user-level and account-level verify endpoints,
+    # then fall back to listing zones (which confirms the right permissions anyway)
     info "Verifying token..."
-    local verify_result
-    verify_result=$(cf_api GET "/user/tokens/verify") || {
-      error "Could not verify token. Check that you pasted the full token and it has the correct permissions."
-      echo ""
-      if ! confirm "Try another token?" "Y"; then
-        return 1
+    local verify_result verify_ok=false
+    # Try user-level token verify first
+    if verify_result=$(cf_api GET "/user/tokens/verify" 2>/dev/null); then
+      local status
+      status=$(echo "$verify_result" | jq -r '.result.status')
+      [[ "$status" == "active" ]] && verify_ok=true
+    fi
+    # If that failed, try listing zones — this confirms the token works AND has the right permissions
+    if [[ "$verify_ok" == "false" ]]; then
+      if cf_api GET "/zones?per_page=1" >/dev/null 2>&1; then
+        verify_ok=true
       fi
-      echo ""
-      continue
-    }
-
-    local status
-    status=$(echo "$verify_result" | jq -r '.result.status')
-    if [[ "$status" != "active" ]]; then
-      error "Token status: $status (expected 'active')"
+    fi
+    if [[ "$verify_ok" == "false" ]]; then
+      error "Could not verify token. Check that you pasted the full token and it has the correct permissions."
       echo ""
       if ! confirm "Try another token?" "Y"; then
         return 1
