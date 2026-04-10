@@ -55,7 +55,8 @@ export function requireSession(name) {
 // ── Shell helpers ───────────────────────────────────────────────────────────
 
 export function run(cmd, opts = {}) {
-  return execSync(cmd, { encoding: "utf-8", stdio: opts.quiet ? "pipe" : "inherit", ...opts }).trim();
+  const result = execSync(cmd, { encoding: "utf-8", stdio: opts.quiet ? "pipe" : "inherit", ...opts });
+  return result ? result.trim() : "";
 }
 
 export function runQuiet(cmd) {
@@ -67,6 +68,26 @@ export function runQuiet(cmd) {
 }
 
 // ── Utilities ───────────────────────────────────────────────────────────────
+
+const ADJECTIVES = [
+  "swift", "calm", "bold", "warm", "cool", "keen", "pure", "soft",
+  "fair", "glad", "wise", "kind", "free", "deep", "vast", "true",
+  "bright", "noble", "vivid", "rapid", "fresh", "quiet", "gentle",
+  "steady", "clear", "golden", "silver", "crimson", "amber", "coral",
+];
+const NOUNS = [
+  "river", "cloud", "stone", "flame", "cedar", "brook", "ridge",
+  "maple", "crane", "pearl", "bloom", "frost", "grove", "haven",
+  "shore", "crest", "meadow", "harbor", "summit", "breeze",
+  "canyon", "delta", "ember", "forge", "island", "lotus", "oasis",
+  "petal", "reef", "tide",
+];
+
+export function randomName() {
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  return `${adj}-${noun}`;
+}
 
 export function slugify(str) {
   return str.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase().slice(0, 32);

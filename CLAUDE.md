@@ -45,11 +45,18 @@ Each repo can define multiple services:
 - `submodules: true` — Clones with `--recurse-submodules`, installs deps in submodule dirs
 - Repos with no services defined fall back to auto-detection from package.json
 
-## Required GitHub Secrets (set on kon fork by setup wizard)
-- `VPS_SSH_KEY` / `VPS_HOST` — Server access
+## Stack Configuration (`stack.json`)
+All non-secret config lives in `stack.json` at the repo root. Updated by the installer/wizard after forking:
+- `domain`, `vps_host`, `github_user` — server identity
+- `repos` — array of repos with services, submodules config
+- `ports_per_session`, `port_range_start`, `port_range_end` — port allocation
+
+The provision workflow reads this file directly via `ansible-playbook -e @../stack.json`.
+
+## GitHub Secrets (credentials only, set on kon fork)
+- `VPS_SSH_KEY` — SSH private key for server access
 - `CLOUDFLARE_API_TOKEN` — Wildcard SSL via DNS challenge
 - `KON_GITHUB_TOKEN` — PAT for gh CLI auth
-- `KON_REPOS` — JSON array of repos with services config
 - `ANTHROPIC_API_KEY` — Claude Code API key (optional)
 - `OPENAI_API_KEY` — OpenAI Codex API key (optional)
 

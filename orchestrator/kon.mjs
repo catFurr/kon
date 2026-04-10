@@ -51,7 +51,7 @@ switch (command) {
 kon - Cloud dev environment manager
 
 Usage:
-  kon new <name> [--creator <who>]      Create session (clones repos, installs deps, starts dev server)
+  kon new [name] [--creator <who>]      Create session (auto-names if omitted)
                  [--ssh-key <pubkey>]
   kon join <name>                       Attach to an existing session
   kon delete <name>                     Delete a session and clean up

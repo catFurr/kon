@@ -75,7 +75,11 @@ Kon is designed to manage multiple component repos. Each repo stays simple — j
 
 ## Getting started
 
-1. Provision a VPS (Ubuntu)
-2. Add GitHub secrets: `VPS_SSH_KEY`, `VPS_HOST`, `CLOUDFLARE_API_TOKEN`, `KON_GITHUB_TOKEN`, `KON_REPOS`, `ANTHROPIC_API_KEY`
-3. Run the Provision workflow from the Actions tab
-4. SSH as `kon@your-server` and start creating sessions
+1. Run the installer: `curl -fsSL https://gazastack.sh/install | bash`
+
+Or manually:
+1. Fork this repo
+2. Edit `stack.json` with your domain, VPS IP, and repos config
+3. Add GitHub secrets: `VPS_SSH_KEY`, `CLOUDFLARE_API_TOKEN`, `KON_GITHUB_TOKEN`
+4. Run the Provision workflow from the Actions tab
+5. SSH as `kon@your-server` and start creating sessions

@@ -1,17 +1,8 @@
 {
   "domain": "{{ domain }}",
-  "repos_dir": "repos",
-  "ports_per_session": {{ kon_ports_per_session | default(10) }},
-  "port_range_start": {{ kon_port_range_start | default(4000) }},
-  "port_range_end": {{ kon_port_range_end | default(9000) }},
-  "repos": [
-{% for repo in kon_repos %}
-    {
-      "name": "{{ repo.name }}",
-      "url": "{{ repo.url }}",
-      "submodules": {{ repo.submodules | default(false) | to_json }},
-      "services": {{ repo.services | default([]) | to_json }}
-    }{{ "," if not loop.last else "" }}
-{% endfor %}
-  ]
+  "repos_dir": "{{ repos_dir | default('repos') }}",
+  "ports_per_session": {{ ports_per_session | default(10) }},
+  "port_range_start": {{ port_range_start | default(4000) }},
+  "port_range_end": {{ port_range_end | default(9000) }},
+  "repos": {{ repos | to_json }}
 }

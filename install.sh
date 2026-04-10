@@ -1165,10 +1165,8 @@ set_all_secrets() {
 
   local secrets_list=(
     "VPS_SSH_KEY:$ssh_key_content"
-    "VPS_HOST:$VPS_IPV4"
     "CLOUDFLARE_API_TOKEN:$CF_TOKEN"
     "KON_GITHUB_TOKEN:$GITHUB_PAT"
-    "KON_REPOS:$REPOS_JSON"
   )
 
   [[ -n "$ANTHROPIC_KEY" ]] && secrets_list+=("ANTHROPIC_API_KEY:$ANTHROPIC_KEY")
@@ -1202,6 +1200,54 @@ set_all_secrets() {
   success "All secrets configured"
 }
 
+commit_stack_json() {
+  info "Writing stack.json to $KON_FORK..."
+
+  # Build stack.json content
+  local stack_content
+  stack_content=$(jq -n \
+    --arg domain "$DOMAIN" \
+    --arg vps_host "$VPS_IPV4" \
+    --arg github_user "$GITHUB_USER" \
+    --argjson repos "$REPOS_JSON" \
+    '{
+      domain: $domain,
+      vps_host: $vps_host,
+      github_user: $github_user,
+      repos_dir: "repos",
+      ports_per_session: 10,
+      port_range_start: 4000,
+      port_range_end: 9000,
+      repos: $repos
+    }')
+
+  # Base64 encode the content
+  local b64_content
+  b64_content=$(echo "$stack_content" | base64 | tr -d '\n')
+
+  # Check if file already exists (need SHA for update)
+  local existing_sha=""
+  local existing
+  existing=$(gh_api GET "/repos/$KON_FORK/contents/stack.json" 2>/dev/null) || true
+  if [[ -n "$existing" ]]; then
+    existing_sha=$(echo "$existing" | jq -r '.sha // empty' 2>/dev/null)
+  fi
+
+  # Build request body
+  local body="{\"message\":\"Update stack configuration\",\"content\":\"$b64_content\""
+  if [[ -n "$existing_sha" ]]; then
+    body="$body,\"sha\":\"$existing_sha\""
+  fi
+  body="$body}"
+
+  gh_api PUT "/repos/$KON_FORK/contents/stack.json" "$body" >/dev/null || {
+    error "Failed to write stack.json to $KON_FORK"
+    return 1
+  }
+
+  success "stack.json committed to $KON_FORK"
+}
+
 trigger_provision() {
   # Verify workflow exists
   info "Verifying provision workflow..."
@@ -1220,7 +1266,7 @@ trigger_provision() {
 
   info "Triggering provision workflow..."
   gh_api POST "/repos/$KON_FORK/actions/workflows/provision.yml/dispatches" \
-    "{\"ref\":\"main\",\"inputs\":{\"domain\":\"$DOMAIN\",\"github_user\":\"$GITHUB_USER\"}}" >/dev/null || {
+    "{\"ref\":\"main\"}" >/dev/null || {
     error "Failed to trigger workflow."
     return 1
   }
@@ -1289,6 +1335,8 @@ step_7_fork_deploy() {
   detect_encryption_method || return 1
 
   fork_kon || return 1
+  echo ""
+  commit_stack_json || return 1
   echo ""
   set_all_secrets || return 1
   echo ""

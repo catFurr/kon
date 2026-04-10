@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, readdirSync
 import { join } from "node:path";
 import {
   loadConfig, loadSessions, saveSessions, allocatePorts,
-  run, runQuiet, slugify,
+  run, runQuiet, slugify, randomName,
   sessionUserName, sessionHome, tmuxSessionName,
   userExists, isSyncFresh,
   KON_ENV, REPOS_DIR, SESSIONS_DIR, TEMPLATES_DIR,
@@ -126,8 +126,8 @@ function generateAiConfigs(home, vars) {
 
 export function cmdNew(name, flags = {}) {
   if (!name) {
-    console.error("Usage: kon new <name> [--creator <who>] [--ssh-key <pubkey>]");
-    process.exit(1);
+    name = randomName();
+    console.log(`No name provided, using "${name}".`);
   }
 
   name = slugify(name);

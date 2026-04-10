@@ -1,0 +1,10 @@
+{
+  "domain": "example.com",
+  "vps_host": "0.0.0.0",
+  "github_user": "your-github-username",
+  "repos_dir": "repos",
+  "ports_per_session": 10,
+  "port_range_start": 4000,
+  "port_range_end": 9000,
+  "repos": []
+}

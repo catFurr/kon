@@ -3,10 +3,8 @@
   hosts: vps
   become: true
   vars:
-    domain: "{{ domain }}"
     deploy_root: /var/www/{{ domain }}
     certbot_email: admin@{{ domain }}
-    kon_repos: "{{ repos }}"
 
   roles:
     - common

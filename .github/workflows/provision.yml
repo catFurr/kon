@@ -2,15 +2,6 @@ name: Provision
 
 on:
   workflow_dispatch:
-    inputs:
-      domain:
-        required: true
-        type: string
-        description: "Domain name (e.g. example.com)"
-      github_user:
-        required: true
-        type: string
-        description: "GitHub username for gh CLI auth"
 
 jobs:
   provision:
@@ -18,12 +9,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Read VPS host from stack.json
+        id: config
+        run: echo "vps_host=$(jq -r '.vps_host' stack.json)" >> "$GITHUB_OUTPUT"
+
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H ${{ steps.config.outputs.vps_host }} >> ~/.ssh/known_hosts
 
       - name: Write Ansible inventory
         run: |
@@ -31,7 +26,7 @@ jobs:
           all:
             hosts:
               vps:
-                ansible_host: ${{ secrets.VPS_HOST }}
+                ansible_host: ${{ steps.config.outputs.vps_host }}
                 ansible_user: root
                 ansible_ssh_private_key_file: ~/.ssh/deploy_key
           EOF
@@ -43,11 +38,9 @@ jobs:
         working-directory: ansible
         run: |
           ansible-playbook playbooks/provision.yml \
-            -e "domain=${{ inputs.domain }}" \
+            -e "@../stack.json" \
             -e "cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            -e '{"repos": ${{ secrets.KON_REPOS }}}' \
             -e "github_token=${{ secrets.KON_GITHUB_TOKEN }}" \
-            -e "github_user=${{ inputs.github_user }}" \
             -e "anthropic_api_key=${{ secrets.ANTHROPIC_API_KEY }}" \
             -e "openai_api_key=${{ secrets.OPENAI_API_KEY }}"
         env:
