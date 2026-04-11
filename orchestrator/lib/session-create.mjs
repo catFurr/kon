@@ -188,6 +188,12 @@ export async function cmdNew(name, flags = {}) {
     if (existsSync(source)) {
       console.log(`  Copying ${repo.name} from cache...`);
       cpSync(source, dest, { recursive: true });
+      // Check out the configured branch (if specified)
+      if (repo.branch) {
+        runQuiet(`git -C ${dest} fetch --all`);
+        runQuiet(`git -C ${dest} checkout ${repo.branch}`);
+        runQuiet(`git -C ${dest} reset --hard origin/${repo.branch}`);
+      }
       // Initialize submodules if copied from cache
       if (repo.submodules) {
         console.log(`  Initializing submodules for ${repo.name}...`);
@@ -195,8 +201,9 @@ export async function cmdNew(name, flags = {}) {
       }
     } else {
       const cloneFlags = repo.submodules ? " --recurse-submodules" : "";
+      const branchFlag = repo.branch ? ` --branch ${repo.branch}` : "";
       console.log(`  Cloning ${repo.name}...`);
-      run(`git clone${cloneFlags} ${repo.url} ${dest}`);
+      run(`git clone${cloneFlags}${branchFlag} ${repo.url} ${dest}`);
     }
   }
 

@@ -171,6 +171,7 @@ export function cmdSync() {
       console.log(`  Updating ${repo.name}...`);
       runQuiet(`git -C ${dest} fetch --all --prune`);
       const defaultBranch =
+        repo.branch ||
         runQuiet(`git -C ${dest} symbolic-ref refs/remotes/origin/HEAD 2>/dev/null`)?.replace(
           "refs/remotes/origin/",
           ""
@@ -183,8 +184,9 @@ export function cmdSync() {
       }
     } else {
       const cloneFlags = repo.submodules ? " --recurse-submodules" : "";
+      const branchFlag = repo.branch ? ` --branch ${repo.branch}` : "";
       console.log(`  Cloning ${repo.name}...`);
-      run(`git clone${cloneFlags} ${repo.url} ${dest}`, { quiet: true });
+      run(`git clone${cloneFlags}${branchFlag} ${repo.url} ${dest}`, { quiet: true });
     }
   }
 

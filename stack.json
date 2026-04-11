@@ -1,10 +1,38 @@
 {
-  "domain": "example.com",
-  "vps_host": "0.0.0.0",
-  "github_user": "your-github-username",
+  "domain": "buytelegram.store",
+  "vps_host": "31.97.224.248",
+  "github_user": "catFurr",
   "repos_dir": "repos",
   "ports_per_session": 10,
   "port_range_start": 4000,
   "port_range_end": 9000,
-  "repos": []
+  "repos": [
+    {
+      "name": "vitermin",
+      "url": "https://github.com/ezorfa/vitermin.git",
+      "branch": "feat/dev-session-docker",
+      "submodules": false,
+      "services": [
+        {
+          "label": "vitermin-infra",
+          "path": "infra/docker",
+          "type": "docker",
+          "devCommand": "test -f ../../.env.dev && cp ../../.env.dev ../../.env || test -f ../../.env || cp ../../.env.example ../../.env; docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build",
+          "expose": [
+            { "name": "api", "envVar": "BACKEND_PORT", "subdomain": "api" },
+            { "name": "admin", "envVar": "ADMIN_PORT", "subdomain": "admin" }
+          ],
+          "healthCheck": {
+            "url": "http://127.0.0.1:${BACKEND_PORT}/healthz",
+            "intervalMs": 3000,
+            "timeoutMs": 120000
+          },
+          "postUp": [
+            "docker exec kon-${SESSION}-backend-1 npm run -w apps/backend migrate",
+            "docker exec kon-${SESSION}-backend-1 npm run -w apps/backend seed"
+          ]
+        }
+      ]
+    }
+  ]
 }
