@@ -273,6 +273,9 @@ export async function cmdNew(name, flags = {}) {
     );
   };
 
+  // 8.5. Set ownership before starting services (services run as session user)
+  run(`chown -R ${username}:${username} ${home}`);
+
   // 9. Start all services across all repos
   const devServers = [];
   let portIndex = 0;
