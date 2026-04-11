@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 SESSION=${1:?Usage: kon-enter <session-name>}
-SESSION_DIR="/var/kon/sessions/$SESSION"
-SESSION_USER="ses_${SESSION}"
+SESSION_DIR="/opt/kon/sessions/$SESSION"
+SESSION_USER="kon-${SESSION}"
 [ -d "$SESSION_DIR" ] || { echo "Error: session '$SESSION' not found" >&2; exit 1; }
 
 if [ -n "$TMUX" ]; then

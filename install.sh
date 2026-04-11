@@ -101,30 +101,6 @@ read_input() {
   eval "$__resultvar=\$value"
 }
 
-# Present a numbered list and return the selected index (0-based)
-# Usage: select_from_list "item1|item2|item3" RESULT_VAR
-select_from_list() {
-  local IFS='|'
-  local items=($1)
-  local __resultvar="$2"
-  local count=${#items[@]}
-  local choice
-
-  for i in "${!items[@]}"; do
-    echo -e "  ${BOLD}$((i + 1)))${RESET} ${items[$i]}"
-  done
-  echo ""
-
-  while true; do
-    read -rp "$(echo -e "  ${CYAN}Select [1-$count]:${RESET} ")" choice < /dev/tty
-    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= count )); then
-      eval "$__resultvar=$((choice - 1))"
-      return 0
-    fi
-    error "Invalid selection. Enter a number between 1 and $count."
-  done
-}
-
 check_dependencies() {
   local missing=()
 
@@ -194,13 +170,16 @@ api_call() {
 
   http_code=$(echo "$response" | tail -1)
   body=$(echo "$response" | sed '$d')
-  API_HTTP_CODE="$http_code"
-
   if [[ "$http_code" -ge 400 ]]; then
     if [[ "$http_code" == "429" ]]; then
-      warn "Rate limited. Waiting 10s..." >&2
+      local retries="${_API_RETRY_COUNT:-0}"
+      if (( retries >= 3 )); then
+        error "Rate limited after $retries retries. Giving up." >&2
+        return 1
+      fi
+      warn "Rate limited. Waiting 10s... (attempt $((retries + 1))/3)" >&2
       sleep 10
-      api_call "$@" # retry once
+      _API_RETRY_COUNT=$((retries + 1)) api_call "$@"
       return $?
     fi
     local err_msg
@@ -1454,7 +1433,6 @@ VAULT_PASSWORD=""
 REPOS_JSON=""
 KON_FORK=""
 HAS_GH=false
-API_HTTP_CODE=""
 
 on_error() {
   local line=$1
@@ -1468,11 +1446,31 @@ on_error() {
 run_step() {
   local step_func="$1"
   local step_name="$2"
+  local rc
+  local tmp_state
 
   while true; do
-    if "$step_func"; then
+    # Write global state to a temp file from a subshell so set -e works inside
+    # the step function, but we can still recover variable assignments.
+    tmp_state=$(mktemp)
+    rc=0
+    (
+      set -e
+      "$step_func"
+      # Export all state variables so the parent can source them
+      declare -p CF_TOKEN CF_ZONE_ID DOMAIN PROJECT_NAME HOSTINGER_TOKEN \
+        HOSTINGER_KEY_ID VPS_ID VPS_IPV4 VPS_IPV6 SSH_KEY_PATH SSH_KEY_PUB_PATH \
+        GITHUB_PAT GITHUB_USER ANTHROPIC_KEY OPENAI_KEY VAULT_PASSWORD \
+        REPOS_JSON KON_FORK HAS_GH 2>/dev/null > "$tmp_state"
+    ) || rc=$?
+
+    if [[ "$rc" -eq 0 ]]; then
+      # Restore global state from subshell
+      source "$tmp_state" 2>/dev/null
+      rm -f "$tmp_state"
       return 0
     fi
+    rm -f "$tmp_state"
 
     echo ""
     if ! confirm "Retry $step_name?" "Y"; then

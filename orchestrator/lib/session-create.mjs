@@ -252,7 +252,21 @@ export async function cmdNew(name, flags = {}) {
     }
   }
 
-  // 8. Start all services across all repos
+  // 8. Cgroup resource limits (create before starting services so they run under limits)
+  const sliceName = `kon-${name}.slice`;
+  const sliceContent = `[Slice]\nMemoryMax=2G\nMemoryHigh=1536M\nCPUQuota=200%\nTasksMax=512\n`;
+  const slicePath = `/etc/systemd/system/${sliceName}`;
+  writeFileSync(slicePath, sliceContent);
+  runQuiet("systemctl daemon-reload");
+
+  // Helper to run a command as the session user under the cgroup slice
+  const runInSlice = (cmd) => {
+    return runQuiet(
+      `systemd-run --quiet --slice=${sliceName} --uid=$(id -u ${username}) --gid=$(id -g ${username}) --setenv=HOME=${home} --setenv=USER=${username} -p WorkingDirectory=${home} -- bash -c ${JSON.stringify(cmd)}`
+    );
+  };
+
+  // 9. Start all services across all repos
   const devServers = [];
   let portIndex = 0;
   const hasDocker = dockerAvailable();
@@ -340,7 +354,7 @@ export async function cmdNew(name, flags = {}) {
           const logFile = join(tmpDir, `${svc.label}.log`);
           const pidFile = join(tmpDir, `${svc.label}.pid`);
           const cmd = `cd ${svcPath} && PORT=${port} nohup ${devCmd} --port ${port} --host 127.0.0.1 > ${logFile} 2>&1 & echo $! > ${pidFile}`;
-          runQuiet(`su - ${username} -c '${cmd}'`);
+          runInSlice(cmd);
           devServers.push({
             label: svc.label,
             port,
@@ -432,13 +446,7 @@ cd "${reposBase}"
   // 12. Set ownership
   run(`chown -R ${username}:${username} ${home}`);
 
-  // 13. Cgroup resource limits
-  const sliceContent = `[Slice]\nMemoryMax=2G\nMemoryHigh=1536M\nCPUQuota=200%\nTasksMax=512\n`;
-  const slicePath = `/etc/systemd/system/kon-${name}.slice`;
-  writeFileSync(slicePath, sliceContent);
-  runQuiet("systemctl daemon-reload");
-
-  // 14. Save session metadata
+  // 13. Save session metadata
   sessions[name] = {
     created_at: new Date().toISOString(),
     creator: flags.creator || null,
@@ -462,7 +470,7 @@ cd "${reposBase}"
   // 15. Start tmux session and attach
   const tmuxName = tmuxSessionName(name);
   run(
-    `systemd-run --slice=kon-${name}.slice --uid=$(id -u ${username}) --gid=$(id -g ${username}) --setenv=HOME=${home} --setenv=USER=${username} -p WorkingDirectory=${reposBase} -- tmux new-session -d -s ${tmuxName}`,
+    `systemd-run --slice=${sliceName} --uid=$(id -u ${username}) --gid=$(id -g ${username}) --setenv=HOME=${home} --setenv=USER=${username} -p WorkingDirectory=${reposBase} -- tmux new-session -d -s ${tmuxName}`,
     { quiet: true }
   );
 
