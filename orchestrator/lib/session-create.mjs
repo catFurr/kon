@@ -337,8 +337,8 @@ export async function cmdNew(name, flags = {}) {
           });
         }
 
-        const envStr = envParts.join(" ");
-        const cmd = `cd ${svcPath} && ${envStr} ${svc.devCommand}`;
+        const exportStr = envParts.map(e => `export ${e}`).join(" && ");
+        const cmd = `${exportStr} && cd ${svcPath} && ${svc.devCommand}`;
         run(`su - ${username} -c ${JSON.stringify(cmd)}`);
         devServers.push({ label: svc.label, port: null, type: SVC_TYPE.DOCKER, repoName: repo.name });
 
