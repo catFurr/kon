@@ -6,7 +6,8 @@ import {
   run, runQuiet,
   sessionUserName, sessionHome, tmuxSessionName,
   userExists, tmuxSessionExists, readSliceMemoryMB,
-  REPOS_DIR, SESSIONS_DIR, SYNC_MARKER,
+  REPOS_DIR, SESSIONS_DIR, SYNC_MARKER, VAULT_PASS_FILE,
+  decryptVaultFiles, decryptRepoVaults, SVC_TYPE,
 } from "./helpers.mjs";
 import { removeNginxConfigs } from "./session-create.mjs";
 
@@ -70,7 +71,7 @@ export function cmdDelete(name) {
   }
 
   // Stop Docker containers for this session
-  const hasDockerServices = s.services && s.services.some((svc) => svc.type === "docker");
+  const hasDockerServices = s.services && s.services.some((svc) => svc.type === SVC_TYPE.DOCKER || svc.type === SVC_TYPE.DOCKER_EXPOSED);
   if (hasDockerServices) {
     console.log("  Stopping Docker containers...");
     runQuiet(`docker compose --project-name kon-${name} down 2>/dev/null`);
@@ -126,8 +127,10 @@ export function cmdInfo(name) {
   if (s.services && s.services.length > 0) {
     console.log(`  Services:`);
     for (const svc of s.services) {
-      if (svc.type === "docker") {
+      if (svc.type === SVC_TYPE.DOCKER) {
         console.log(`    ${svc.label}: docker (${svc.repoName})`);
+      } else if (svc.type === SVC_TYPE.DOCKER_EXPOSED) {
+        console.log(`    ${svc.label}: port ${svc.port} — ${svc.url || "-"} (docker)`);
       } else {
         console.log(`    ${svc.label}: port ${svc.port} — ${svc.url || "-"}`);
       }
@@ -197,6 +200,8 @@ export function cmdUpdate(name) {
   const reposBase = join(sessionHome(name), config.repos_dir || "repos");
   const username = sessionUserName(name);
 
+  const hasVault = existsSync(VAULT_PASS_FILE);
+
   console.log(`Updating repos in session "${name}"...`);
   for (const repo of config.repos) {
     const repoPath = join(reposBase, repo.name);
@@ -211,6 +216,14 @@ export function cmdUpdate(name) {
     }
     console.log(`  ${repo.name}: pulling...`);
     runQuiet(`su - ${username} -c "git -C ${repoPath} pull --ff-only" 2>/dev/null`);
+
+    // Re-decrypt vault files after pull
+    if (hasVault) {
+      const decrypted = decryptVaultFiles(repoPath, username);
+      if (decrypted.length > 0) {
+        console.log(`    Re-decrypted: ${decrypted.map(n => `.env.${n}`).join(", ")}`);
+      }
+    }
   }
   console.log("Update complete.");
 }
@@ -305,4 +318,23 @@ export function cmdCleanup(flags = {}) {
     console.log(`  ${s.name} (${s.age} days old)`);
   }
   console.log(`\nRun 'kon delete <name>' to remove them.`);
+}
+
+// ── Secrets ────────────────────────────────────────────────────────────────
+
+export function cmdSecretsReload(name) {
+  requireSession(name);
+
+  if (!existsSync(VAULT_PASS_FILE)) {
+    console.error("No vault password configured at /opt/kon/.vault-pass");
+    process.exit(1);
+  }
+
+  const config = loadConfig();
+  const reposBase = join(sessionHome(name), config.repos_dir || "repos");
+  const username = sessionUserName(name);
+
+  console.log(`Reloading secrets for session "${name}"...`);
+  decryptRepoVaults(config, reposBase, username);
+  console.log("Secrets reload complete.");
 }

@@ -153,6 +153,15 @@
     group: kon-sessions
   when: (anthropic_api_key is defined and anthropic_api_key | length > 0) or (openai_api_key is defined and openai_api_key | length > 0)
 
+- name: Write vault password file
+  copy:
+    dest: /opt/kon/.vault-pass
+    content: "{{ vault_password }}"
+    mode: "0640"
+    owner: root
+    group: kon-sessions
+  when: vault_password is defined and vault_password | length > 0
+
 - name: Restrict gh config to kon-sessions group
   file:
     path: /opt/kon/.config/gh/hosts.yml

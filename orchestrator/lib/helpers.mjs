@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,10 +11,15 @@ export const REPOS_DIR = join(KON_HOME, "repos");
 export const SESSIONS_DIR = join(KON_HOME, "sessions");
 export const KON_ENV = join(KON_HOME, "env");
 export const SYNC_MARKER = join(REPOS_DIR, ".last-sync");
+export const VAULT_PASS_FILE = join(KON_HOME, ".vault-pass");
 export const SESSION_USER_PREFIX = "kon-";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const TEMPLATES_DIR = join(__dirname, "..", "templates");
+
+// ── Constants ──────────────────────────────────────────────────────────────
+
+export const SVC_TYPE = { DOCKER: "docker", DOCKER_EXPOSED: "docker-exposed", DEV: "dev" };
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -113,11 +118,33 @@ export function tmuxSessionExists(sessionName) {
   return runQuiet(`tmux has-session -t ${sessionName} 2>/dev/null; echo $?`) === "0";
 }
 
+export function resolveVars(str, vars) {
+  return str.replace(/\$\{(\w+)\}/g, (_, key) => vars[key] ?? "");
+}
+
+export function serviceUrl(name, domain, subdomain, httpServerCount) {
+  return httpServerCount === 1
+    ? `https://${name}.${domain}`
+    : `https://${subdomain}-${name}.${domain}`;
+}
+
+// ── Port allocation ────────────────────────────────────────────────────────
+
 export function countServices(config) {
   let count = 0;
   for (const repo of config.repos || []) {
-    const services = (repo.services || []).filter((s) => s.type !== "docker");
-    count += services.length || 1; // at least 1 per repo for auto-detect fallback
+    const services = repo.services || [];
+    if (services.length === 0) {
+      count += 1; // auto-detect fallback
+      continue;
+    }
+    for (const svc of services) {
+      if (svc.type === SVC_TYPE.DOCKER) {
+        count += (svc.expose || []).length;
+      } else {
+        count += 1;
+      }
+    }
   }
   return count;
 }
@@ -171,4 +198,90 @@ export function parseFlags(args) {
 export function renderTemplate(templatePath, vars) {
   const template = readFileSync(templatePath, "utf-8");
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? "");
+}
+
+// ── Docker lifecycle helpers ────────────────────────────────────────────────
+
+export async function pollHealthCheck(url, intervalMs = 3000, timeoutMs = 90000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(url);
+      await res.body?.cancel();
+      if (res.ok) return true;
+    } catch {}
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error(`Health check timed out after ${timeoutMs}ms: ${url}`);
+}
+
+export function runPostUpCommands(commands, vars) {
+  for (const cmd of commands) {
+    const resolved = resolveVars(cmd, vars);
+    console.log(`  Running: ${resolved}`);
+    run(resolved);
+  }
+}
+
+// ── Vault secrets ──────────────────────────────────────────────────────────
+
+function yamlToEnv(yamlStr) {
+  return yamlStr
+    .split("\n")
+    .filter(line => line.trim() && !line.trim().startsWith("#"))
+    .map(line => {
+      const match = line.match(/^(\w+)\s*:\s*(.*)$/);
+      if (!match) return null;
+      const [, key, raw] = match;
+      const value = raw.replace(/^["']|["']$/g, "").trim();
+      return `${key}=${value}`;
+    })
+    .filter(Boolean)
+    .join("\n") + "\n";
+}
+
+export function decryptVaultFiles(repoPath, username) {
+  const vaultDir = join(repoPath, "vault");
+  if (!existsSync(vaultDir) || !existsSync(VAULT_PASS_FILE)) return [];
+
+  const files = readdirSync(vaultDir).filter(f => f.endsWith(".yml") || f.endsWith(".yaml"));
+  const decrypted = [];
+
+  for (const file of files) {
+    const envName = file.replace(/\.ya?ml$/, "");
+    const vaultFile = join(vaultDir, file);
+    const envFile = join(repoPath, `.env.${envName}`);
+
+    const yamlContent = runQuiet(
+      `ansible-vault view "${vaultFile}" --vault-password-file "${VAULT_PASS_FILE}"`
+    );
+
+    if (!yamlContent) {
+      console.log(`    Warning: Failed to decrypt ${file}`);
+      continue;
+    }
+
+    const envContent = yamlToEnv(yamlContent);
+    writeFileSync(envFile, envContent, { mode: 0o600 });
+
+    if (username) {
+      runQuiet(`chown ${username}:${username} "${envFile}"`);
+    }
+
+    decrypted.push(envName);
+  }
+
+  return decrypted;
+}
+
+export function decryptRepoVaults(config, reposBase, username) {
+  if (!existsSync(VAULT_PASS_FILE)) return;
+
+  for (const repo of config.repos) {
+    const repoPath = join(reposBase, repo.name);
+    const decrypted = decryptVaultFiles(repoPath, username);
+    if (decrypted.length > 0) {
+      console.log(`  ${repo.name}: ${decrypted.map(n => `.env.${n}`).join(", ")}`);
+    }
+  }
 }

@@ -7,7 +7,9 @@ import {
   sessionUserName, sessionHome, tmuxSessionName,
   userExists, isSyncFresh,
   KON_ENV, REPOS_DIR, SESSIONS_DIR, TEMPLATES_DIR,
-  renderTemplate,
+  renderTemplate, decryptRepoVaults,
+  pollHealthCheck, resolveVars, runPostUpCommands,
+  SVC_TYPE, serviceUrl,
 } from "./helpers.mjs";
 import { cmdSync } from "./session-manage.mjs";
 
@@ -124,7 +126,7 @@ function generateAiConfigs(home, vars) {
 
 // ── Main create command ─────────────────────────────────────────────────────
 
-export function cmdNew(name, flags = {}) {
+export async function cmdNew(name, flags = {}) {
   if (!name) {
     name = randomName();
     console.log(`No name provided, using "${name}".`);
@@ -198,6 +200,9 @@ export function cmdNew(name, flags = {}) {
     }
   }
 
+  // 3.5. Decrypt vault secrets for each repo
+  decryptRepoVaults(config, reposBase, username);
+
   // 4. gh CLI auth
   const ghConfigDir = join(home, ".config", "gh");
   const systemGhConfig = "/opt/kon/.config/gh/hosts.yml";
@@ -254,7 +259,7 @@ export function cmdNew(name, flags = {}) {
 
   // Create Docker network for this session if any docker services exist
   const hasDockerServices = config.repos.some(
-    (r) => (r.services || []).some((s) => s.type === "docker")
+    (r) => (r.services || []).some((s) => s.type === SVC_TYPE.DOCKER)
   );
   if (hasDockerServices && hasDocker) {
     console.log(`  Creating Docker network kon-${name}...`);
@@ -275,7 +280,7 @@ export function cmdNew(name, flags = {}) {
             label: repo.name,
             path: ".",
             devCommand: devCmd,
-            type: "dev",
+            type: SVC_TYPE.DEV,
           }];
         }
       }
@@ -284,15 +289,48 @@ export function cmdNew(name, flags = {}) {
     for (const svc of services) {
       const svcPath = svc.path === "." ? repoPath : join(repoPath, svc.path);
 
-      if (svc.type === "docker") {
+      if (svc.type === SVC_TYPE.DOCKER) {
         if (!hasDocker) {
           console.log(`  Skipping Docker service "${svc.label}" (Docker not installed)`);
           continue;
         }
         console.log(`  Starting Docker service "${svc.label}"...`);
-        const cmd = `cd ${svcPath} && COMPOSE_PROJECT_NAME=kon-${name} ${svc.devCommand}`;
+
+        // Build env vars for exposed port mappings
+        const envParts = [`COMPOSE_PROJECT_NAME=kon-${name}`];
+        const portVars = { SESSION: name };
+
+        for (const exp of svc.expose || []) {
+          const port = ports[portIndex++];
+          envParts.push(`${exp.envVar}=${port}`);
+          portVars[exp.envVar] = String(port);
+          devServers.push({
+            label: exp.name,
+            port,
+            type: SVC_TYPE.DOCKER_EXPOSED,
+            repoName: repo.name,
+            subdomain: exp.subdomain || exp.name,
+          });
+        }
+
+        const envStr = envParts.join(" ");
+        const cmd = `cd ${svcPath} && ${envStr} ${svc.devCommand}`;
         runQuiet(`su - ${username} -c '${cmd}'`);
-        devServers.push({ label: svc.label, port: null, type: "docker", repoName: repo.name });
+        devServers.push({ label: svc.label, port: null, type: SVC_TYPE.DOCKER, repoName: repo.name });
+
+        // Health check — wait for services to be ready
+        if (svc.healthCheck) {
+          const healthUrl = resolveVars(svc.healthCheck.url, portVars);
+          console.log(`  Waiting for health check: ${healthUrl}...`);
+          await pollHealthCheck(healthUrl, svc.healthCheck.intervalMs, svc.healthCheck.timeoutMs);
+          console.log(`  Health check passed.`);
+        }
+
+        // Post-up commands (migrations, seeding, etc.)
+        if (svc.postUp?.length) {
+          console.log(`  Running post-up commands...`);
+          runPostUpCommands(svc.postUp, portVars);
+        }
       } else {
         // Standard dev server
         const port = ports[portIndex++];
@@ -306,7 +344,7 @@ export function cmdNew(name, flags = {}) {
           devServers.push({
             label: svc.label,
             port,
-            type: "dev",
+            type: SVC_TYPE.DEV,
             repoName: repo.name,
             subdomain: svc.subdomain || svc.label,
           });
@@ -316,7 +354,7 @@ export function cmdNew(name, flags = {}) {
   }
 
   // 9. Configure nginx for all dev services
-  const httpServers = devServers.filter((s) => s.type === "dev" && s.port);
+  const httpServers = devServers.filter((s) => (s.type === "dev" || s.type === SVC_TYPE.DOCKER_EXPOSED) && s.port);
   if (domain !== "localhost" && httpServers.length > 0) {
     if (httpServers.length === 1) {
       // Single service: use simple session.domain
@@ -360,11 +398,10 @@ cd "${reposBase}"
 
   const serviceListStr = devServers
     .map((s) => {
-      if (s.type === "docker") return `- **${s.label}** (docker) — ${s.repoName}`;
-      const url = httpServers.length === 1
-        ? `https://${name}.${domain}`
-        : `https://${s.subdomain}-${name}.${domain}`;
-      return `- **${s.label}** — port ${s.port} — ${url}`;
+      if (s.type === SVC_TYPE.DOCKER) return `- **${s.label}** (docker) — ${s.repoName}`;
+      const url = serviceUrl(name, domain, s.subdomain, httpServers.length);
+      const typeTag = s.type === SVC_TYPE.DOCKER_EXPOSED ? " (docker)" : "";
+      return `- **${s.label}** — port ${s.port} — ${url}${typeTag}`;
     })
     .join("\n");
 
@@ -411,10 +448,9 @@ cd "${reposBase}"
       port: s.port,
       type: s.type,
       repoName: s.repoName,
-      url: s.type === "docker" ? null
-        : httpServers.length === 1
-          ? `https://${name}.${domain}`
-          : `https://${s.subdomain}-${name}.${domain}`,
+      url: (s.type === SVC_TYPE.DEV || s.type === SVC_TYPE.DOCKER_EXPOSED)
+        ? serviceUrl(name, domain, s.subdomain, httpServers.length)
+        : null,
     })),
     dev_port: httpServers[0]?.port || ports[0], // backward compat
     domain,
@@ -439,13 +475,12 @@ cd "${reposBase}"
   } else if (httpServers.length > 1) {
     console.log(`  Services:`);
     for (const svc of devServers) {
-      if (svc.type === "docker") {
+      if (svc.type === SVC_TYPE.DOCKER) {
         console.log(`    ${svc.label}: docker (${svc.repoName})`);
       } else {
-        const url = httpServers.length === 1
-          ? `https://${name}.${domain}`
-          : `https://${svc.subdomain}-${name}.${domain}`;
-        console.log(`    ${svc.label}: ${url} (port ${svc.port})`);
+        const url = serviceUrl(name, domain, svc.subdomain, httpServers.length);
+        const tag = svc.type === SVC_TYPE.DOCKER_EXPOSED ? ", docker" : "";
+        console.log(`    ${svc.label}: ${url} (port ${svc.port}${tag})`);
       }
     }
   }

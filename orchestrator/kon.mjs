@@ -5,6 +5,7 @@ import { cmdNew } from "./lib/session-create.mjs";
 import {
   cmdList, cmdJoin, cmdDelete, cmdInfo,
   cmdSync, cmdUpdate, cmdStatus, cmdSnapshot, cmdCleanup,
+  cmdSecretsReload,
 } from "./lib/session-manage.mjs";
 
 const [command, ...args] = process.argv.slice(2);
@@ -18,7 +19,10 @@ switch (command) {
     break;
   case "new":
   case "create":
-    cmdNew(target, flags);
+    cmdNew(target, flags).catch((err) => {
+      console.error(err.message || err);
+      process.exit(1);
+    });
     break;
   case "join":
   case "attach":
@@ -46,6 +50,14 @@ switch (command) {
   case "cleanup":
     cmdCleanup(flags);
     break;
+  case "secrets":
+    if (args[0] === "reload") {
+      cmdSecretsReload(args[1]);
+    } else {
+      console.log("Usage: kon secrets reload <session>");
+      process.exit(1);
+    }
+    break;
   default:
     console.log(`
 kon - Cloud dev environment manager
@@ -61,6 +73,7 @@ Usage:
   kon sync                              Sync cached repos from GitHub
   kon update <name>                     Pull latest into session repos
   kon snapshot <name>                   Save session git state
+  kon secrets reload <name>             Re-decrypt vault secrets to .env files
   kon cleanup [--days <n>]              Find stale sessions (default: 7 days)
 `);
     process.exit(command ? 1 : 0);

@@ -42,6 +42,7 @@ jobs:
             -e "cloudflare_api_token=${{ secrets.CLOUDFLARE_API_TOKEN }}" \
             -e "github_token=${{ secrets.KON_GITHUB_TOKEN }}" \
             -e "anthropic_api_key=${{ secrets.ANTHROPIC_API_KEY }}" \
-            -e "openai_api_key=${{ secrets.OPENAI_API_KEY }}"
+            -e "openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            -e "vault_password=${{ secrets.VAULT_PASSWORD }}"
         env:
           ANSIBLE_HOST_KEY_CHECKING: "false"

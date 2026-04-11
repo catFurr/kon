@@ -804,6 +804,18 @@ step_4_ai_keys() {
   else
     info "OpenAI API key: skipped"
   fi
+
+  echo ""
+  info "Vault password encrypts per-project secrets (Ansible Vault)."
+  info "Leave blank if your repos don't use vault/ directories."
+  read_secret "Vault password (Enter to skip)" VAULT_PASSWORD
+  echo ""
+
+  if [[ -n "$VAULT_PASSWORD" ]]; then
+    success "Vault password: set"
+  else
+    info "Vault password: skipped"
+  fi
 }
 
 # ── Step 5: DNS + SSH ───────────────────────────────────────────────────────
@@ -1203,6 +1215,7 @@ set_all_secrets() {
 
   [[ -n "$ANTHROPIC_KEY" ]] && secrets_list+=("ANTHROPIC_API_KEY:$ANTHROPIC_KEY")
   [[ -n "$OPENAI_KEY" ]] && secrets_list+=("OPENAI_API_KEY:$OPENAI_KEY")
+  [[ -n "$VAULT_PASSWORD" ]] && secrets_list+=("VAULT_PASSWORD:$VAULT_PASSWORD")
 
   if ! confirm "Set ${#secrets_list[@]} secrets on $KON_FORK?" "Y"; then
     return 1
@@ -1401,6 +1414,18 @@ EOF
   echo -e "  ${CYAN}All sessions:${RESET}"
   echo -e "    kon list"
   echo ""
+  if [[ -n "$VAULT_PASSWORD" ]]; then
+    echo -e "  ${CYAN}Per-project secrets:${RESET}"
+    echo -e "    Add a ${BOLD}vault/${RESET} directory to any repo with encrypted YAML files."
+    echo -e "    They'll auto-decrypt to .env files when sessions are created."
+    echo ""
+    echo -e "    ${DIM}# Create a secrets file${RESET}"
+    echo -e "    mkdir -p vault"
+    echo -e "    echo 'DATABASE_URL: postgres://...' > vault/dev.yml"
+    echo -e "    ansible-vault encrypt vault/dev.yml"
+    echo -e "    ${DIM}# Add .env.* to .gitignore, then commit vault/dev.yml${RESET}"
+    echo ""
+  fi
   echo -e "  ${DIM}Need help? https://github.com/catFurr/kon${RESET}"
   echo ""
 }
@@ -1425,6 +1450,7 @@ GITHUB_PAT=""
 GITHUB_USER=""
 ANTHROPIC_KEY=""
 OPENAI_KEY=""
+VAULT_PASSWORD=""
 REPOS_JSON=""
 KON_FORK=""
 HAS_GH=false

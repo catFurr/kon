@@ -28,6 +28,7 @@ Infrastructure and dev environment orchestrator for Gaza Stack.
 - `kon sync` — Update cached repo clones (with submodule support)
 - `kon update <name>` — Pull latest into a session's repos
 - `kon snapshot <name>` — Save git state (branches, uncommitted changes)
+- `kon secrets reload <name>` — Re-decrypt vault secrets to .env files
 - `kon cleanup` — Find stale sessions
 
 ## Session Workflow
@@ -59,6 +60,10 @@ The provision workflow reads this file directly via `ansible-playbook -e @../sta
 - `KON_GITHUB_TOKEN` — PAT for gh CLI auth
 - `ANTHROPIC_API_KEY` — Claude Code API key (optional)
 - `OPENAI_API_KEY` — OpenAI Codex API key (optional)
+- `VAULT_PASSWORD` — Ansible Vault password for per-project secrets (optional)
+
+## Per-Project Secrets (Ansible Vault)
+Repos can include a `vault/` directory with encrypted YAML files (e.g., `vault/dev.yml`, `vault/staging.yml`). During session creation and updates, these are auto-decrypted to `.env.{name}` files in the repo root (e.g., `.env.dev`). Files are flat key-value YAML converted to `KEY=VALUE` .env format. Requires `VAULT_PASSWORD` secret. Use `kon secrets reload <session>` to manually re-decrypt.
 
 ## Rules
 - AI must NEVER include itself as co-author in commits or anywhere else
