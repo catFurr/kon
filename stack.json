@@ -25,7 +25,7 @@
           "healthCheck": {
             "url": "http://127.0.0.1:${BACKEND_PORT}/healthz",
             "intervalMs": 3000,
-            "timeoutMs": 120000
+            "timeoutMs": 300000
           },
           "postUp": [
             "docker exec kon-${SESSION}-backend-1 npm run -w apps/backend migrate",

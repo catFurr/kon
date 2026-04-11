@@ -339,7 +339,7 @@ export async function cmdNew(name, flags = {}) {
 
         const envStr = envParts.join(" ");
         const cmd = `cd ${svcPath} && ${envStr} ${svc.devCommand}`;
-        runQuiet(`su - ${username} -c '${cmd}'`);
+        run(`su - ${username} -c ${JSON.stringify(cmd)}`);
         devServers.push({ label: svc.label, port: null, type: SVC_TYPE.DOCKER, repoName: repo.name });
 
         // Health check — wait for services to be ready
