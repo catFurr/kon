@@ -150,8 +150,8 @@ export function cmdInfo(name) {
   console.log(`  Repos:`);
   for (const repo of config.repos) {
     const repoPath = join(reposBase, repo.name);
-    const branch = runQuiet(`git -C ${repoPath} branch --show-current 2>/dev/null`);
-    const dirty = runQuiet(`git -C ${repoPath} status --porcelain 2>/dev/null`);
+    const branch = runQuiet(`su - ${username} -c "git -C ${repoPath} branch --show-current" 2>/dev/null`);
+    const dirty = runQuiet(`su - ${username} -c "git -C ${repoPath} status --porcelain" 2>/dev/null`);
     const status = existsSync(repoPath) ? `${branch || "detached"}${dirty ? " (modified)" : ""}` : "missing";
     console.log(`    ${repo.name}: ${status}`);
   }
