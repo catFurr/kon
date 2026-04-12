@@ -46,11 +46,11 @@ export function cmdJoin(name) {
 
   if (!tmuxSessionExists(tmuxName)) {
     console.log("Tmux session was closed. Starting a new one...");
-    run(`su - ${username} -c "tmux new-session -d -s ${tmuxName} -c ${reposBase}"`);
+    run(`su - ${username} -c "TERM=xterm-256color tmux new-session -d -s ${tmuxName} -c ${reposBase}"`);
   }
 
   console.log(`Joining session "${name}"...`);
-  const child = spawn("su", ["-", username, "-c", `tmux attach-session -t ${tmuxName}`], {
+  const child = spawn("su", ["-", username, "-c", `TERM=xterm-256color tmux attach-session -t ${tmuxName}`], {
     stdio: "inherit",
   });
   child.on("exit", (code) => process.exit(code || 0));
@@ -66,7 +66,7 @@ export function cmdDelete(name) {
   console.log(`Deleting session "${name}"...`);
 
   if (tmuxSessionExists(tmuxName)) {
-    runQuiet(`tmux kill-session -t ${tmuxName}`);
+    runQuiet(`su - ${username} -c "TERM=xterm-256color tmux kill-session -t ${tmuxName}" 2>/dev/null`);
     console.log("  Killed tmux session.");
   }
 
@@ -215,6 +215,16 @@ export function cmdUpdate(name) {
     if (dirty) {
       console.log(`  ${repo.name}: has uncommitted changes, skipping`);
       continue;
+    }
+    // Ensure we're on the configured branch before pulling
+    const targetBranch = repo.branch ||
+      runQuiet(`git -C ${repoPath} symbolic-ref refs/remotes/origin/HEAD 2>/dev/null`)
+        ?.replace("refs/remotes/origin/", "") || "main";
+    const currentBranch = runQuiet(`git -C ${repoPath} branch --show-current 2>/dev/null`);
+    if (!currentBranch || currentBranch !== targetBranch) {
+      console.log(`  ${repo.name}: checking out ${targetBranch}...`);
+      runQuiet(`su - ${username} -c "git -C ${repoPath} fetch --all"`);
+      runQuiet(`su - ${username} -c "git -C ${repoPath} checkout ${targetBranch}"`);
     }
     console.log(`  ${repo.name}: pulling...`);
     runQuiet(`su - ${username} -c "git -C ${repoPath} pull --ff-only" 2>/dev/null`);

@@ -115,7 +115,11 @@ export function userExists(username) {
 }
 
 export function tmuxSessionExists(sessionName) {
-  return runQuiet(`tmux has-session -t ${sessionName} 2>/dev/null; echo $?`) === "0";
+  // Check as the session user — each user has their own tmux server
+  // Force TERM for compatibility with terminals like Ghostty (xterm-ghostty)
+  return runQuiet(
+    `su - ${sessionName} -c 'TERM=xterm-256color tmux has-session -t ${sessionName} 2>/dev/null; echo $?'`
+  ) === "0";
 }
 
 export function resolveVars(str, vars) {
@@ -243,6 +247,12 @@ function yamlToEnv(yamlStr) {
 export function decryptVaultFiles(repoPath, username) {
   const vaultDir = join(repoPath, "vault");
   if (!existsSync(vaultDir) || !existsSync(VAULT_PASS_FILE)) return [];
+
+  const hasVaultCmd = runQuiet("which ansible-vault 2>/dev/null");
+  if (!hasVaultCmd) {
+    console.error("  ERROR: ansible-vault not installed. Run: pip3 install ansible-core --break-system-packages");
+    return [];
+  }
 
   const files = readdirSync(vaultDir).filter(f => f.endsWith(".yml") || f.endsWith(".yaml"));
   const decrypted = [];

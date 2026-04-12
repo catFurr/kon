@@ -7,5 +7,6 @@ Wants=network-online.target
 Type=oneshot
 ExecStart=/usr/local/bin/kon sync
 User=root
+Environment=GH_CONFIG_DIR=/opt/kon/.config/gh
 StandardOutput=journal
 StandardError=journal

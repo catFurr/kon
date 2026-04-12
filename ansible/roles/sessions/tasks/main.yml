@@ -12,6 +12,13 @@
     update_cache: true
     cache_valid_time: 3600
 
+- name: Install pip and ansible-core (for vault decryption)
+  shell: |
+    apt-get install -y python3-pip
+    pip3 install ansible-core --break-system-packages
+  args:
+    creates: /usr/local/bin/ansible-vault
+
 - name: Install Docker
   shell: |
     if ! command -v docker &>/dev/null; then
@@ -129,6 +136,10 @@
         user: {{ github_user }}
         git_protocol: https
     mode: "0600"
+  when: github_token is defined
+
+- name: Configure git to use gh CLI for authentication
+  shell: GH_CONFIG_DIR=/opt/kon/.config/gh gh auth setup-git
   when: github_token is defined
 
 # ── AI tool API keys ──────────────────────────────────────────────────────
